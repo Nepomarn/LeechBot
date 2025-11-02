@@ -4,6 +4,7 @@ import aiohttp
 import asyncio
 import hashlib
 import re
+import threading
 from aiohttp import web
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
@@ -42,22 +43,29 @@ user_preferences = {}
 download_queue = {}
 tmdb_cache = {}
 
-# ===== HTTP SERVER FOR RENDER (REQUIRED FOR FREE TIER) =====
+# ===== HTTP SERVER FOR RENDER =====
 async def health_check(request):
     return web.Response(text="✅ Telegram Bot is running!\n🤖 Bot Status: Active\n⏰ Uptime: OK")
 
-async def start_web_server():
-    """Start HTTP server to satisfy Render's port binding requirement"""
-    app_web = web.Application()
-    app_web.router.add_get('/', health_check)
-    app_web.router.add_get('/health', health_check)
-    
+def run_web_server():
+    """Run web server in separate thread"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     port = int(os.environ.get('PORT', 10000))
-    runner = web.AppRunner(app_web)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"🌐 Web server started on port {port}")
+    
+    async def start():
+        app_web = web.Application()
+        app_web.router.add_get('/', health_check)
+        app_web.router.add_get('/health', health_check)
+        
+        runner = web.AppRunner(app_web)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', port)
+        await site.start()
+        print(f"🌐 Web server started on port {port}")
+    
+    loop.run_until_complete(start())
+    loop.run_forever()
 
 # ===== HELPER FUNCTIONS =====
 
@@ -752,14 +760,27 @@ async def process_download(client, message, url, filename, user_id):
             os.remove(tmdb_thumb_path)
 
 # ===== MAIN FUNCTION =====
-async def main():
-    """Start both HTTP server and Telegram bot"""
-    await start_web_server()
-    print("🤖 Starting Telegram bot...")
-    await app.start()
-    print("✅ Bot is running with video format support!")
-    await asyncio.Event().wait()
-
 if __name__ == "__main__":
-    print("🚀 Starting bot with web server for Render...")
-    asyncio.run(main())
+    print("=" * 50)
+    print("🚀 STARTING TELEGRAM LEECH BOT")
+    print("=" * 50)
+    
+    # Start web server in background thread
+    print("📡 Starting web server...")
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
+    
+    # Give web server a moment to start
+    time.sleep(2)
+    print("✅ Web server running")
+    
+    # Start Telegram bot (this blocks and keeps running)
+    print("🤖 Starting Telegram bot...")
+    print("⏳ Connecting to Telegram...")
+    
+    try:
+        app.run()
+    except KeyboardInterrupt:
+        print("\n👋 Bot stopped by user")
+    except Exception as e:
+        print(f"❌ Error: {e}")
